@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Binary Love</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #000; overflow: hidden; height: 100vh; width: 100vw; }
+  canvas { display: block; position: fixed; top: 0; left: 0; }
+  #rain { z-index: 1; }
+  #ui   { z-index: 2; pointer-events: none; }
+</style>
+</head>
+<body>
+<canvas id="rain"></canvas>
+<canvas id="ui"></canvas>
+<script>
+const W = () => window.innerWidth;
+const H = () => window.innerHeight;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// ════════════════════════════════════════════
+//  RAIN  — brighter + faster
+// ════════════════════════════════════════════
+const rainC = document.getElementById('rain');
+const rCtx  = rainC.getContext('2d');
+const RFS   = 13;
+let rCols, rDrops, rSpd, rBri;
+
+function initRain(){
+  rainC.width = W(); rainC.height = H();
+  rCols  = Math.floor(W()/RFS);
+  rDrops = Array.from({length:rCols}, () => Math.random()*-(H()/RFS));
+  // faster: 0.8 – 2.4  (was 0.2 – 1.0)
+  rSpd   = Array.from({length:rCols}, () => .8 + Math.random()*1.6);
+  rBri   = Array.from({length:rCols}, () => Math.random());
+}
+
+function drawRain(){
+  // less fade per frame → longer, more visible trails
+  rCtx.fillStyle = 'rgba(0,0,0,0.045)';
+  rCtx.fillRect(0,0,W(),H());
+  rCtx.font = `bold ${RFS}px "Courier New",monospace`;
+
+  for(let i=0;i<rCols;i++){
+    const b  = rBri[i];
+    const ch = Math.round(Math.random()).toString();
+
+    // leading char — bright white or hot pink
+    rCtx.shadowBlur  = b>.6 ? 14 : 7;
+    rCtx.shadowColor = '#ff1493';
+    rCtx.fillStyle   = b>.6 ? '#ffffff' : '#ff3399';
+    rCtx.fillText(ch, i*RFS, rDrops[i]*RFS);
+
+    // second char — medium pink
+    rCtx.shadowBlur  = 5;
+    rCtx.shadowColor = '#ff1493';
+    rCtx.fillStyle   = 'rgba(255,50,140,0.85)';
+    rCtx.fillText(Math.round(Math.random()).toString(), i*RFS, (rDrops[i]-1)*RFS);
+
+    // tail chars — dimmer pink
+    rCtx.shadowBlur = 2;
+    rCtx.fillStyle  = 'rgba(180,10,80,0.7)';
+    rCtx.fillText(Math.round(Math.random()).toString(), i*RFS, (rDrops[i]-2)*RFS);
+    rCtx.fillStyle  = 'rgba(100,5,45,0.55)';
+    rCtx.fillText(Math.round(Math.random()).toString(), i*RFS, (rDrops[i]-3)*RFS);
+
+    rDrops[i] += rSpd[i];
+    if(rDrops[i]*RFS > H() && Math.random()>.97){
+      rDrops[i]=0; rSpd[i]=.8+Math.random()*1.6; rBri[i]=Math.random();
+    }
+  }
+  rCtx.shadowBlur=0;
+}
+
+window.addEventListener('resize', initRain);
+initRain();
+setInterval(drawRain, 20); // 50fps (was 36ms/~28fps)
+
+// ════════════════════════════════════════════
+//  MOSAIC  —  CELL = 3 px
+// ════════════════════════════════════════════
+const uiC  = document.getElementById('ui');
+const uCtx = uiC.getContext('2d');
+const DPR  = window.devicePixelRatio || 1;
+
+function resizeUI(){
+  uiC.width  = W()*DPR; uiC.height = H()*DPR;
+  uiC.style.width = W()+'px'; uiC.style.height = H()+'px';
+  uCtx.scale(DPR, DPR);
+}
+resizeUI();
+
+const CELL = 3;
+
+function buildMask(text, fontPx){
+  const SCALE = 4;
+  const ow    = Math.max(W(), 900);
+  const oh    = Math.round(fontPx * 1.7);
+  const tmp   = document.createElement('canvas');
+  tmp.width   = ow*SCALE; tmp.height = oh*SCALE;
+  const c     = tmp.getContext('2d');
+  c.fillStyle = '#000'; c.fillRect(0,0,tmp.width,tmp.height);
+  c.fillStyle    = '#fff';
+  c.font         = `900 ${fontPx*SCALE}px "Courier New",monospace`;
+  c.textBaseline = 'middle'; c.textAlign = 'center';
+  c.fillText(text, tmp.width/2, tmp.height/2);
+
+  const cellS = CELL*SCALE;
+  const img   = c.getImageData(0,0,tmp.width,tmp.height).data;
+  const cols  = Math.floor(tmp.width/cellS);
+  const rows  = Math.floor(tmp.height/cellS);
+  const on=[], off=[];
+
+  for(let r=0;r<rows;r++){
+    for(let cc=0;cc<cols;cc++){
+      let sum=0, cnt=cellS*cellS;
+      for(let dy=0;dy<cellS;dy++)
+        for(let dx=0;dx<cellS;dx++)
+          sum += img[((r*cellS+dy)*tmp.width+(cc*cellS+dx))*4];
+      (sum/cnt>40?on:off).push({col:cc,row:r});
+    }
+  }
+
+  const allC = [...on,...off].map(p=>p.col);
+  const onR  = on.map(p=>p.row);
+  const minC = Math.min(...allC), maxC = Math.max(...allC);
+  const minR = Math.min(...onR),  maxR = Math.max(...onR);
+  const wPx  = (maxC-minC+1)*CELL;
+  const hPx  = (maxR-minR+1)*CELL;
+  const ox   = (W()-wPx)/2 - minC*CELL;
+  const oy   = (H()-hPx)/2 - minR*CELL;
+
+  return { on, off, ox, oy, minC, maxC, minR, maxR };
+}
+
+function drawMosaic(m, alpha, scatter=0){
+  const { on, off, ox, oy, minC, maxC, minR, maxR } = m;
+
+  uCtx.save();
+  uCtx.globalAlpha = alpha * 0.85;
+  uCtx.fillStyle   = '#000';
+  uCtx.fillRect(minC*CELL+ox-CELL, minR*CELL+oy-CELL,
+                (maxC-minC+3)*CELL, (maxR-minR+3)*CELL);
+  uCtx.restore();
+
+  uCtx.save();
+  uCtx.font = `bold ${CELL+1}px "Courier New",monospace`;
+
+  uCtx.globalAlpha = alpha * 0.38;
+  uCtx.fillStyle   = 'rgba(110,10,50,1)';
+  uCtx.shadowBlur  = 0;
+  for(const {col,row} of off)
+    uCtx.fillText(Math.round(Math.random()).toString(), col*CELL+ox, row*CELL+oy+CELL);
+
+  uCtx.globalAlpha = alpha;
+  for(const {col,row} of on){
+    const sx = scatter?(Math.random()-.5)*scatter:0;
+    const sy = scatter?(Math.random()-.5)*scatter:0;
+    const hi = Math.random()>.25;
+    uCtx.shadowColor = '#ff1493';
+    uCtx.shadowBlur  = hi ? 5 : 2;
+    uCtx.fillStyle   = hi ? '#ffffff' : '#ff69b4';
+    uCtx.fillText(Math.round(Math.random()).toString(), col*CELL+ox+sx, row*CELL+oy+sy+CELL);
+  }
+
+  uCtx.restore();
+  uCtx.shadowBlur=0;
+}
+
+async function showMosaic(text,fontPx,holdMs=900,inMs=300,outMs=360){
+  const m=buildMask(text,fontPx); const N=20;
+  for(let i=1;i<=N;i++){ uCtx.clearRect(0,0,W(),H()); drawMosaic(m,i/N,(1-i/N)*14); await sleep(inMs/N); }
+  await sleep(holdMs);
+  for(let i=N;i>=0;i--){ uCtx.clearRect(0,0,W(),H()); drawMosaic(m,i/N,0); await sleep(outMs/N); }
+  uCtx.clearRect(0,0,W(),H());
+}
+
+async function showMessage(text,fontPx,charDelay=90){
+  let built='';
+  for(let i=0;i<text.length;i++){
+    for(let s=0;s<4;s++){
+      const m=buildMask(built+(Math.random()>.5?'0':'1'),fontPx);
+      uCtx.clearRect(0,0,W(),H()); drawMosaic(m,1,3); await sleep(22);
+    }
+    built+=text[i];
+    const m=buildMask(built,fontPx);
+    uCtx.clearRect(0,0,W(),H()); drawMosaic(m,1,0); await sleep(charDelay);
+  }
+  await sleep(1700);
+  const mf=buildMask(text,fontPx);
+  for(let i=20;i>=0;i--){ uCtx.clearRect(0,0,W(),H()); drawMosaic(mf,i/20,0); await sleep(24); }
+  uCtx.clearRect(0,0,W(),H()); await sleep(250);
+}
+
+const cntFpx  = () => Math.min(Math.floor(H()*.58), Math.floor(W()*.48));
+const msgFpx  = () => Math.min(Math.floor(H()*.15), Math.floor(W()*.11), 90);
+const heartFpx= () => Math.min(Math.floor(H()*.44), Math.floor(W()*.38));
+
+(async()=>{
+  await sleep(700);
+  for(const n of [3,2,1]){
+    await showMosaic(String(n), cntFpx(), 900, 280, 340);
+    await sleep(60);
+  }
+  await sleep(300);
+  for(const txt of ['I LOVE YOU','FOREVER','YOU ARE MY WORLD']){
+    await showMessage(txt, msgFpx(), 85);
+  }
+  const hm=buildMask('♡', heartFpx()); const N=24;
+  for(let i=1;i<=N;i++){ uCtx.clearRect(0,0,W(),H()); drawMosaic(hm,i/N,(1-i/N)*10); await sleep(16); }
+  let tick=0;
+  setInterval(()=>{
+    tick++;
+    uCtx.clearRect(0,0,W(),H());
+    drawMosaic(hm, .83+Math.sin(tick*.06)*.17, 0);
+  }, 50);
+})();
+</script>
+</body>
+</html>
